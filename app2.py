@@ -24,7 +24,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 model.to(device)
 
 # Ensure documents directory exists
-doc_dir = "C:/Users/Administrator/Documents/python/documents"
+doc_dir = "./documents"
 os.makedirs(doc_dir, exist_ok=True)
 
 # Function to extract text using adaptive chunking

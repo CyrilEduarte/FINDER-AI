@@ -3,13 +3,8 @@ import sys
 __import__('pysqlite3')
 sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 
-# Fix for Torch event loop issue
-import asyncio
+# Rest of your imports
 import streamlit as st
-
-if not asyncio.get_event_loop().is_running():
-    asyncio.set_event_loop(asyncio.new_event_loop())
-    
 import torch
 import os
 import chromadb
@@ -20,9 +15,6 @@ import PyPDF2
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 from sentence_transformers import SentenceTransformer
 from llama_index.core import SimpleDirectoryReader
-import sys
-__import__('pysqlite3')
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 
 # Initialize ChromaDB Client
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
@@ -38,7 +30,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 model.to(device)
 
 # Ensure documents directory exists
-doc_dir = "./documents"
+doc_dir = "C:/Users/Administrator/Documents/python/documents"
 os.makedirs(doc_dir, exist_ok=True)
 
 # Function to extract text using adaptive chunking

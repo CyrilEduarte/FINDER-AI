@@ -1,0 +1,8 @@
+streamlit
+torch
+chromadb
+numpy
+PyPDF2
+transformers
+sentence-transformers
+llama-index

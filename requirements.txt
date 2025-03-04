@@ -6,3 +6,4 @@ PyPDF2
 transformers
 sentence-transformers
 llama-index
+pysqlite3-binary

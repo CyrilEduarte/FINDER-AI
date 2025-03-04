@@ -1,4 +1,15 @@
+# Fix for sqlite3 version issue
+import sys
+__import__('pysqlite3')
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+
+# Fix for Torch event loop issue
+import asyncio
 import streamlit as st
+
+if not asyncio.get_event_loop().is_running():
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    
 import torch
 import os
 import chromadb
@@ -9,6 +20,9 @@ import PyPDF2
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 from sentence_transformers import SentenceTransformer
 from llama_index.core import SimpleDirectoryReader
+import sys
+__import__('pysqlite3')
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 
 # Initialize ChromaDB Client
 chroma_client = chromadb.PersistentClient(path="./chroma_db")

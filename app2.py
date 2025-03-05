@@ -1,9 +1,3 @@
-# Fix for sqlite3 version issue
-import sys
-__import__('pysqlite3')
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
-
-# Rest of your imports
 import streamlit as st
 import torch
 import os
@@ -11,10 +5,11 @@ import chromadb
 import uuid
 import base64
 import numpy as np
-import PyPDF2
+import urllib.parse
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 from sentence_transformers import SentenceTransformer
 from llama_index.core import SimpleDirectoryReader
+import PyPDF2
 
 # Initialize ChromaDB Client
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
@@ -23,25 +18,15 @@ chroma_client = chromadb.PersistentClient(path="./chroma_db")
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
 # Load FLAN-T5 Model for summarization
-model_name = "google/flan-t5-large"
+model_name = "google/flan-t5-large"  # Upgraded to Large for better summarization
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-device = "cuda" if torch.cuda.is_available() else "cpu"
+device = "cpu"
 model.to(device)
 
 # Ensure documents directory exists
 doc_dir = "C:/Users/Administrator/Documents/python/documents"
 os.makedirs(doc_dir, exist_ok=True)
-
-# Function to extract text using adaptive chunking
-def chunk_text(text, chunk_size=500, overlap=100):
-    """Splits text into chunks with overlap to maintain context."""
-    words = text.split()
-    chunks = []
-    for i in range(0, len(words), chunk_size - overlap):
-        chunk = " ".join(words[i:i + chunk_size])
-        chunks.append(chunk)
-    return chunks
 
 # Function to extract and clean text from PDFs
 def extract_text_from_pdf(pdf_path):
@@ -54,11 +39,24 @@ def extract_text_from_pdf(pdf_path):
         st.error(f"Error extracting text from {pdf_path}: {e}")
         return ""
 
-# Function to summarize a document chunk
-def summarize_text(text_chunk, max_length=100):
-    prompt = f"Summarize this section concisely: {text_chunk}"
-    inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512).to(device)
-    summary_ids = model.generate(inputs.input_ids, max_length=max_length, min_length=30, length_penalty=2.0, num_beams=4)
+# Function to extract key sections (first page and last 500 characters)
+def extract_key_sections(text):
+    lines = text.split("\n")
+    first_page = " ".join(lines[:10])  # First 10 lines (Title/Header)
+    last_part = text[-500:] if len(text) > 500 else text  # Last 500 chars
+    return f"{first_page}\n{last_part}"
+
+# Function to summarize text into a document description
+def summarize_text(text, max_length=40):
+    refined_prompt = f"""
+    Identify the document type and its purpose in a concise sentence.
+    Document Content:
+    {text[:1000]}  # Limiting to the first 1000 characters for better context
+    """.strip()
+    
+    inputs = tokenizer(refined_prompt, return_tensors="pt", truncation=True, max_length=512)
+    inputs = {key: value.to(device) for key, value in inputs.items()}
+    summary_ids = model.generate(**inputs, max_length=max_length, min_length=10, length_penalty=2.0)
     return tokenizer.decode(summary_ids[0], skip_special_tokens=True)
 
 # Streamlit UI
@@ -74,35 +72,29 @@ if uploaded_files:
     for file in uploaded_files:
         file_path = os.path.join(doc_dir, file.name)
         with open(file_path, "wb") as f:
-            f.write(file.read())
+            f.write(file.read())  # Save the file permanently
     st.sidebar.success("Files saved! Click 'Process Documents' to index them.")
 
 # Index Documents in ChromaDB
 if st.sidebar.button("Process Documents"):
-    with st.spinner("Processing documents..."):
-        collection = chroma_client.get_or_create_collection(name="business_docs")
-        
-        for filename in os.listdir(doc_dir):
-            file_path = os.path.join(doc_dir, filename)
-            text = extract_text_from_pdf(file_path)
-            if not text:
-                continue
-            
-            chunks = chunk_text(text)
-            summarized_chunks = [summarize_text(chunk) for chunk in chunks]
-            final_summary = " ".join(summarized_chunks)
-            
-            embeddings = [embedding_model.encode(final_summary).tolist()]
-            doc_id = str(uuid.uuid4())
-            
-            collection.add(
-                ids=[doc_id],
-                documents=[final_summary],  
-                embeddings=embeddings,  
-                metadatas=[{"filename": filename}]
-            )
+    st.sidebar.info("Processing documents...")
+    documents = SimpleDirectoryReader(input_dir=doc_dir).load_data()
+    collection = chroma_client.get_or_create_collection(name="business_docs")
+    
+    for doc in documents:
+        key_sections = " ".join(doc.text.split("\n\n")[:5])  # Extract key sections
+        summary = summarize_text(key_sections)  # Generate concise summary
+        embeddings = [embedding_model.encode(summary).tolist()]
+        doc_id = str(uuid.uuid4())
 
-        st.sidebar.success("Documents Indexed and Saved to ChromaDB!")
+        collection.add(
+            ids=[doc_id],
+            documents=[summary],  
+            embeddings=embeddings,  
+            metadatas=[{"filename": doc.metadata.get("file_name", os.path.basename(doc.metadata.get("name", "Unknown")))}]
+        )
+
+    st.sidebar.success("Documents Indexed and Saved to ChromaDB!")
 
 # Delete Files
 delete_file = st.sidebar.selectbox("Select a file to delete:", os.listdir(doc_dir) if os.listdir(doc_dir) else ["No files available"])
@@ -115,35 +107,36 @@ if st.sidebar.button("Delete Selected File") and delete_file != "No files availa
 
 # 🔄 Re-Index All Files Button
 if st.sidebar.button("🔄 Re-Index All Files"):
-    with st.spinner("Re-indexing documents. This may take some time..."):
-        # Clear existing ChromaDB collection correctly
-        collection = chroma_client.get_or_create_collection(name="business_docs")
-        existing_docs = collection.get()
+    st.sidebar.info("Re-indexing documents. This may take some time...")
 
-        if "ids" in existing_docs and existing_docs["ids"]:
-            collection.delete(ids=existing_docs["ids"])  # Delete all existing document IDs
+    # Clear existing ChromaDB collection correctly
+    collection = chroma_client.get_or_create_collection(name="business_docs")
+    existing_docs = collection.get()
 
-        # Re-index all documents from scratch
-        for filename in os.listdir(doc_dir):
-            file_path = os.path.join(doc_dir, filename)
-            text = extract_text_from_pdf(file_path)
-            if not text:
-                continue  # Skip empty documents
+    if "ids" in existing_docs and existing_docs["ids"]:
+        collection.delete(ids=existing_docs["ids"])  # Delete all existing document IDs
 
-            key_sections = extract_key_sections(text)  # Extract key sections
-            summary = summarize_text(key_sections)  # Generate new summary
-            embeddings = [embedding_model.encode(summary).tolist()]
-            doc_id = str(uuid.uuid4())
+    # Re-index all documents from scratch
+    for filename in os.listdir(doc_dir):
+        file_path = os.path.join(doc_dir, filename)
+        text = extract_text_from_pdf(file_path)
+        if not text:
+            continue  # Skip empty documents
 
-            collection.add(
-                ids=[doc_id],
-                documents=[summary],  
-                embeddings=embeddings,  
-                metadatas=[{"filename": filename}]
-            )
+        key_sections = extract_key_sections(text)  # Extract key sections
+        summary = summarize_text(key_sections)  # Generate new summary
+        embeddings = [embedding_model.encode(summary).tolist()]
+        doc_id = str(uuid.uuid4())
 
-        st.sidebar.success("Re-indexing complete! All files have been processed again.")
-        st.rerun()  # Refresh Streamlit to reflect changes
+        collection.add(
+            ids=[doc_id],
+            documents=[summary],  
+            embeddings=embeddings,  
+            metadatas=[{"filename": filename}]
+        )
+
+    st.sidebar.success("Re-indexing complete! All files have been processed again.")
+    st.rerun()  # Refresh Streamlit to reflect changes
 
 # Retrieve Stored Files in ChromaDB
 collection = chroma_client.get_or_create_collection(name="business_docs")
@@ -183,6 +176,7 @@ if description:
             with st.expander(f"📄 {filename} (Matched by Filename)"):
                 st.markdown(f"[📄 Open {filename}](./documents/{filename})", unsafe_allow_html=True)
 
+
     st.subheader("📄 Potential Matching Documents")
     response_filenames = {}
     summaries = {}
@@ -201,6 +195,7 @@ if description:
             # file_url = f"file:///{urllib.parse.quote(file_path)}"
             with open(file_path, "rb") as f:
                 file_data = f.read()
+
 
             with st.expander(f"📄 {filename} (Confidence: {confidence}%)"):
                 st.markdown(f"**Summary:** {summaries[filename]}")

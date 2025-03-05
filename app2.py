@@ -47,6 +47,7 @@ def extract_key_sections(text):
     return f"{first_page}\n{last_part}"
 
 # Function to summarize text into a document description
+# Function to summarize text into a document description
 def summarize_text(text, max_length=40):
     refined_prompt = f"""
     Identify the document type and its purpose in a concise sentence.
@@ -57,7 +58,28 @@ def summarize_text(text, max_length=40):
     inputs = tokenizer(refined_prompt, return_tensors="pt", truncation=True, max_length=512)
     inputs = {key: value.to(device) for key, value in inputs.items()}
     summary_ids = model.generate(**inputs, max_length=max_length, min_length=10, length_penalty=2.0)
-    return tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+    summary = tokenizer.decode(summary_ids[0], skip_special_tokens=True)
+
+    # Check if the summary is repetitive or incoherent
+    if is_summary_repetitive_or_incoherent(summary):
+        return ""  # Return an empty string for incoherent summaries
+    
+    return summary
+
+# Helper function to detect repetitive or incoherent summaries
+def is_summary_repetitive_or_incoherent(summary):
+    # Split the summary into sentences
+    sentences = summary.split('. ')
+    
+    # Check if all sentences are the same (repetitive)
+    if len(sentences) > 1 and all(s == sentences[0] for s in sentences):
+        return True
+    
+    # Check if the summary is too short or doesn't make sense
+    if len(summary) < 10 or not any(char.isalpha() for char in summary):
+        return True
+    
+    return False
 
 # Streamlit UI
 st.title("📄 SVHFI | FINDER-AI")
